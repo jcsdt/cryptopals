@@ -3,12 +3,8 @@ extern crate hex;
 
 pub fn hex2base64(input: &str) -> Result<String, hex::FromHexError> {
     let b = hex::decode(input);
-    match b {
-        Ok(r) => return Ok(base64::encode(&r)),
-        Err(err) => return Err(err),
-    }
+    b.map(|r| base64::encode(&r))
 }
-
 
 #[cfg(test)]
 mod tests {
