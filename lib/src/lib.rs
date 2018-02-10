@@ -16,14 +16,14 @@ pub fn xor(a: &str, b: &str) -> Result<Vec<u8>, hex::FromHexError> {
     Ok(xor_bytes(&l, &r))
 }
 
-pub fn crack_single_xor(input: &str) -> Result<String, hex::FromHexError> {
+pub fn crack_single_xor(input: &str) -> Result<(String, usize), hex::FromHexError> {
    let mut max_score = 0;
    let mut candidate_string = String::new();
 
    let len_input = input.len();
    let decoded = try!(hex::decode(input));
    // Test all ASCII values
-   for k in 0u8..128 {
+   for k in 0u8..255 {
         let key = std::iter::repeat(k).take(len_input).collect::<Vec<u8>>();
 
         let xored = xor_bytes(&decoded, &key);
@@ -40,7 +40,7 @@ pub fn crack_single_xor(input: &str) -> Result<String, hex::FromHexError> {
         }
    }
 
-   return Ok(candidate_string);
+   return Ok((candidate_string, max_score));
 }
 
 fn score_eng(input: &str) -> usize {
@@ -58,10 +58,29 @@ fn score_eng(input: &str) -> usize {
     score
 }
 
+pub fn detect_single_xor(input: &str) -> Result<String, hex::FromHexError> {
+    let mut max_score = 0;
+    let mut candidate_string = String::new();
+
+    for s in input.split("\n") {
+        let (out, score) = try!(crack_single_xor(s));
+
+        if score > max_score {
+            max_score = score;
+            candidate_string = out.clone();
+        }
+    }
+
+    Ok(candidate_string)
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
+
+    use std::fs::File;
+    use std::io::prelude::*;
 
     #[test]
     fn test_hex2base64() {
@@ -81,6 +100,16 @@ mod tests {
 
     #[test]
     fn test_crack_single_xor() {
-        println!("{}", crack_single_xor("1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736").unwrap())
+        println!("{}", crack_single_xor("1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736").unwrap().0)
+    }
+
+    #[test]
+    fn test_detect_single_xor() {
+        let mut f = File::open("./data/4.txt").expect("file not found");
+
+        let mut contents = String::new();
+        f.read_to_string(&mut contents).expect("something went wrong reading the file");
+
+        println!("{}", detect_single_xor(&contents).unwrap());
     }
 }
