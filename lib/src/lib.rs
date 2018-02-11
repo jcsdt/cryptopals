@@ -1,3 +1,5 @@
+use std::ascii::AsciiExt;
+
 extern crate base64;
 extern crate hex;
 
@@ -16,42 +18,47 @@ pub fn xor(a: &str, b: &str) -> Result<Vec<u8>, hex::FromHexError> {
     Ok(xor_bytes(&l, &r))
 }
 
-pub fn crack_single_xor(input: &str) -> Result<(String, usize), hex::FromHexError> {
-   let mut max_score = 0;
-   let mut candidate_string = String::new();
-
-   let len_input = input.len();
+pub fn crack_single_xor(input: &str) -> Result<(Option<String>, usize), hex::FromHexError> {
    let decoded = try!(hex::decode(input));
+
+   let (out, score) = crack_single_xor_bytes(&decoded);
+   return Ok((String::from_utf8(out).ok(), score));
+}
+
+fn crack_single_xor_bytes(decoded: &[u8]) -> (Vec<u8>, usize) {
+   let mut max_score = 0;
+   let mut candidate_string = vec![];
+
+   let len_input = decoded.len();
    // Test all ASCII values
    for k in 0u8..255 {
         let key = std::iter::repeat(k).take(len_input).collect::<Vec<u8>>();
 
         let xored = xor_bytes(&decoded, &key);
-        let xored_str = String::from_utf8(xored);
-        let score = match  xored_str {
-            Ok(ref r) => score_eng(&r),
-            Err(_) => 0,
-        };
+        let score = score_eng(&xored);
 
         if score > max_score {
             max_score = score;
             // Can't panic here since score > 0
-            candidate_string = xored_str.unwrap().clone();
+            candidate_string = xored.clone();
         }
    }
 
-   return Ok((candidate_string, max_score));
+   (candidate_string, max_score)
 }
 
-fn score_eng(input: &str) -> usize {
+fn score_eng(input: &[u8]) -> usize {
     let mut score = 0;
-    let most_common_letters = "ETAOIN SHRDLU";
+    let most_common_letters = &vec![b'e', b't', b'a', b'o', b'i', b'n', b' ', b's', b'h', b'r', b'd', b'l', b'u'];
     let number_of_letters = most_common_letters.len();
-    for c in input.to_uppercase().chars() {
-        for (idx, r) in most_common_letters.char_indices() {
-            if r == c {
+    for c in input {
+        let mut idx = 0;
+        for r in most_common_letters {
+            if r == c || r.to_ascii_uppercase() == *c {
                 score += number_of_letters - idx;
             }
+
+            idx += 1;
         }
     }
 
@@ -65,9 +72,9 @@ pub fn detect_single_xor(input: &str) -> Result<String, hex::FromHexError> {
     for s in input.split("\n") {
         let (out, score) = try!(crack_single_xor(s));
 
-        if score > max_score {
+        if out.is_some() && score > max_score {
             max_score = score;
-            candidate_string = out.clone();
+            candidate_string = out.unwrap().clone();
         }
     }
 
@@ -106,7 +113,7 @@ mod tests {
 
     #[test]
     fn test_crack_single_xor() {
-        println!("{}", crack_single_xor("1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736").unwrap().0)
+        println!("{:?}", crack_single_xor("1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736").unwrap().0)
     }
 
     #[test]
