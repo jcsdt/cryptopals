@@ -1,4 +1,4 @@
-use std::ascii::AsciiExt;
+use std::f32;
 
 extern crate base64;
 extern crate hex;
@@ -87,6 +87,49 @@ pub fn repeating_xor_cipher(input: &str, key: &str) -> Vec<u8> {
    xor_bytes(input, &key)
 }
 
+pub fn hamming_distance(a: &[u8], b: &[u8]) -> u32 {
+    xor_bytes(a, b).iter().map(|b| b.count_ones()).sum()
+}
+
+pub fn crack_repeating_xor(input: &str) -> Result<String, base64::DecodeError> {
+    let input = try!(base64::decode(input));
+
+    let mut best_key_size = 0;
+    let mut min_dist: f32 = f32::MAX;
+
+    let size = input.len() as u32;
+    for key_size in 2u32..40 {
+        let iter = input.as_slice().chunks(key_size as usize);
+        let sum_dist: f32 = iter.clone().zip(iter.skip(1))
+            .filter(|&(a,b)| a.len() == b.len())
+            .map(|(a,b)| hamming_distance(a, b) as f32 / key_size as f32)
+            .sum();
+
+        let avg_dist: f32 = sum_dist as f32 / (size / key_size) as f32;
+
+        if avg_dist < min_dist {
+            min_dist = avg_dist;
+            best_key_size = key_size;
+        }
+    }
+
+    let mut result = Vec::with_capacity(input.len());
+    result.resize(input.len(), 0);
+    for i in 0..best_key_size {
+        let block = input.iter()
+            .enumerate()
+            .filter(|&(idx, _v)| idx as u32 % best_key_size == i)
+            .map(|(_idx, v)| *v)
+            .collect::<Vec<u8>>();
+        let (deciphered_block, _) = crack_single_xor_bytes(&block[..]);
+        for (idx, u) in deciphered_block.iter().enumerate() {
+            result[idx * (best_key_size as usize) + (i as usize)] = *u;
+        }
+    }
+
+    Ok(String::from_utf8(result).unwrap())
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -132,5 +175,23 @@ mod tests {
             hex::encode(repeating_xor_cipher("Burning 'em, if you ain't quick and nimble\nI go crazy when I hear a cymbal", "ICE")),
             "0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f"
         )
+    }
+
+    #[test]
+    fn test_hamming_distance() {
+        assert_eq!(
+            hamming_distance("this is a test".as_bytes(), "wokka wokka!!!".as_bytes()),
+            37
+        )
+    }
+
+    #[test]
+    fn test_crack_repeating_xor() {
+        let mut f = File::open("./data/6.txt").expect("file not found");
+
+        let mut contents = String::new();
+        f.read_to_string(&mut contents).expect("something went wrong reading the file");
+
+        println!("{}", crack_repeating_xor(&str::replace(&contents, "\n", "")).unwrap());
     }
 }
