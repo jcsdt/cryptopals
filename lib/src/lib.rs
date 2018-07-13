@@ -2,6 +2,10 @@ use std::f32;
 
 extern crate base64;
 extern crate hex;
+extern crate crypto;
+
+use crypto::{ buffer };
+use crypto::buffer::{ ReadBuffer, WriteBuffer, BufferResult };
 
 pub fn hex2base64(input: &str) -> Result<String, hex::FromHexError> {
     let b = hex::decode(input);
@@ -28,8 +32,7 @@ pub fn crack_single_xor(input: &str) -> Result<(Option<String>, usize), hex::Fro
 fn crack_single_xor_bytes(decoded: &[u8]) -> (Vec<u8>, usize) {
    let mut max_score = 0;
    let mut candidate_string = vec![];
-
-   let len_input = decoded.len();
+let len_input = decoded.len();
    // Test all ASCII values
    for k in 0u8..255 {
         let key = std::iter::repeat(k).take(len_input).collect::<Vec<u8>>();
@@ -130,6 +133,26 @@ pub fn crack_repeating_xor(input: &str) -> Result<String, base64::DecodeError> {
     Ok(String::from_utf8(result).unwrap())
 }
 
+pub fn decrypt_aes_ecb_128(input: &[u8], key: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+    let mut decryptor = crypto::aes::ecb_decryptor(crypto::aes::KeySize::KeySize128, key, crypto::blockmodes::PkcsPadding);
+
+    let mut final_result = Vec::<u8>::new();
+    let mut read_buffer = buffer::RefReadBuffer::new(input);
+    let mut buffer = [0; 4096];
+    let mut write_buffer = buffer::RefWriteBuffer::new(&mut buffer);
+
+    loop {
+        let result = try!(decryptor.decrypt(&mut read_buffer, &mut write_buffer, true));
+        final_result.extend(write_buffer.take_read_buffer().take_remaining().iter().map(|&i| i));
+        match result {
+            BufferResult::BufferUnderflow => break,
+            BufferResult::BufferOverflow => { }
+        }
+    }
+
+    Ok(final_result)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -193,5 +216,16 @@ mod tests {
         f.read_to_string(&mut contents).expect("something went wrong reading the file");
 
         println!("{}", crack_repeating_xor(&str::replace(&contents, "\n", "")).unwrap());
+    }
+
+    #[test]
+    fn test_decrypt_aes_ecb_128() {
+        let mut f = File::open("./data/7.txt").expect("file not found");
+
+        let mut content = String::new();
+        f.read_to_string(&mut content).expect("something went wrong reading the file");
+
+        let result = decrypt_aes_ecb_128(&base64::decode(&str::replace(&content, "\n", "")).unwrap(), "YELLOW SUBMARINE".as_bytes()).unwrap();
+        println!("{}", String::from_utf8(result).unwrap());
     }
 }
