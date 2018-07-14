@@ -180,6 +180,16 @@ pub fn detect_aes_ecb_128(input: &str) -> Result<String, hex::FromHexError> {
     Ok(candidate_string.to_string())
 }
 
+pub fn pkcs7(input: &[u8], size: usize) -> Vec<u8> {
+    let input_size = input.len();
+    let diff = size - input_size;
+
+    let mut result = Vec::with_capacity(size);
+    result.extend_from_slice(input);
+    result.append(&mut vec![diff as u8; diff]);
+    result
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -265,5 +275,11 @@ mod tests {
 
         let result = detect_aes_ecb_128(&content).unwrap();
         println!("{}", result);
+    }
+
+    #[test]
+    fn test_pkcs7() {
+        let padded = pkcs7("YELLOW SUBMARINE".as_bytes(), 20);
+        assert_eq!(padded, "YELLOW SUBMARINE\x04\x04\x04\x04".as_bytes());
     }
 }
