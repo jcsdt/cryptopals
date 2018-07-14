@@ -1,4 +1,5 @@
 use std::f32;
+use std::collections::HashMap;
 
 extern crate base64;
 extern crate hex;
@@ -153,6 +154,32 @@ pub fn decrypt_aes_ecb_128(input: &[u8], key: &[u8]) -> Result<Vec<u8>, crypto::
     Ok(final_result)
 }
 
+fn count_repeating_blocks(input: Vec<u8>) -> u32  { 
+    let mut map : HashMap<&[u8], u32> = HashMap::new();
+    for i in 0..input.len() / 16 {
+        let s = &input[i * 16 .. (i+1) * 16];
+        let c = map.entry(s).or_insert(0);
+        *c += 1;
+    }
+
+    *map.values().max().unwrap_or(&0)
+}
+
+pub fn detect_aes_ecb_128(input: &str) -> Result<String, hex::FromHexError> {
+    let mut max_score = 0;
+    let mut candidate_string = "";
+
+    for s in input.split("\n") {
+        let score = count_repeating_blocks(try!(hex::decode(s)));
+        if score > max_score {
+            max_score = score;
+            candidate_string = s.clone();
+        }
+    }
+
+    Ok(candidate_string.to_string())
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -227,5 +254,16 @@ mod tests {
 
         let result = decrypt_aes_ecb_128(&base64::decode(&str::replace(&content, "\n", "")).unwrap(), "YELLOW SUBMARINE".as_bytes()).unwrap();
         println!("{}", String::from_utf8(result).unwrap());
+    }
+
+    #[test]
+    fn test_detect_aes_ecb_128() {
+        let mut f = File::open("./data/8.txt").expect("file not found");
+
+        let mut content = String::new();
+        f.read_to_string(&mut content).expect("something went wrong reading the file");
+
+        let result = detect_aes_ecb_128(&content).unwrap();
+        println!("{}", result);
     }
 }
