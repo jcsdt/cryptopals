@@ -5,6 +5,9 @@ use std::collections::HashMap;
 extern crate base64;
 extern crate hex;
 extern crate crypto;
+extern crate rand;
+
+use rand::prelude::*;
 
 use crypto::{ buffer };
 use crypto::buffer::{ ReadBuffer, WriteBuffer, BufferResult };
@@ -194,7 +197,7 @@ pub fn encrypt_aes_cbc_128(input: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8
     Ok(result)
 }
 
-fn count_repeating_blocks(input: Vec<u8>) -> u32  { 
+fn count_repeating_blocks(input: &[u8]) -> u32  { 
     let mut map : HashMap<&[u8], u32> = HashMap::new();
     for i in 0..input.len() / 16 {
         let s = &input[i * 16 .. (i+1) * 16];
@@ -210,7 +213,7 @@ pub fn detect_aes_ecb_128(input: &str) -> Result<String, hex::FromHexError> {
     let mut candidate_string = "";
 
     for s in input.split("\n") {
-        let score = count_repeating_blocks(try!(hex::decode(s)));
+        let score = count_repeating_blocks(&try!(hex::decode(s)));
         if score > max_score {
             max_score = score;
             candidate_string = s.clone();
@@ -228,6 +231,61 @@ pub fn pkcs7(input: &[u8], size: usize) -> Vec<u8> {
     result.extend_from_slice(input);
     result.append(&mut vec![diff as u8; diff]);
     result
+}
+
+pub fn gen_rand_bytes(size: usize) -> Result<Vec<u8>, rand::Error> {
+    let mut result = vec![0; size];   
+    try!(thread_rng().try_fill(&mut result[..]));
+    Ok(result)
+}
+
+#[derive(Debug)]
+pub enum EncryptionOracleError {
+    RandomError(rand::Error),
+    CipherError(crypto::symmetriccipher::SymmetricCipherError),
+}
+
+impl From<rand::Error> for EncryptionOracleError {
+    fn from(err: rand::Error) -> EncryptionOracleError {
+        EncryptionOracleError::RandomError(err)
+    }
+}
+
+impl From<crypto::symmetriccipher::SymmetricCipherError> for EncryptionOracleError {
+    fn from(err: crypto::symmetriccipher::SymmetricCipherError) -> EncryptionOracleError {
+        EncryptionOracleError::CipherError(err)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum CipherMode {
+    ECB,
+    CBC,
+}
+
+pub fn encryption_oracle_ecb_cbc(input: &[u8]) -> Result<(Vec<u8>, CipherMode), EncryptionOracleError> {
+    let key = try!(gen_rand_bytes(16));
+    let mut plaintext = vec![];
+
+    plaintext.append(&mut try!(gen_rand_bytes(thread_rng().gen_range(5, 10))));
+    plaintext.extend_from_slice(input);
+    plaintext.append(&mut try!(gen_rand_bytes(thread_rng().gen_range(5, 10))));
+    
+    plaintext = pkcs7(&plaintext, (plaintext.len() / 16 + 1) * 16); 
+
+    let cipher_text = if rand::random() {
+        (try!(encrypt_aes_ecb_128(&plaintext, &key)), CipherMode::ECB)
+    } else {
+        let iv = try!(gen_rand_bytes(16));
+        (try!(encrypt_aes_cbc_128(&plaintext, &key, &iv)), CipherMode::CBC)
+    };
+
+    Ok(cipher_text)
+}
+
+pub fn detection_oracle_ecb_cbc(input: &[u8]) -> CipherMode {
+    let c = count_repeating_blocks(input);
+    if c > 1 {CipherMode::ECB} else {CipherMode::CBC}
 }
 
 #[cfg(test)]
@@ -362,5 +420,13 @@ mod tests {
     fn test_pkcs7() {
         let padded = pkcs7("YELLOW SUBMARINE".as_bytes(), 20);
         assert_eq!(padded, "YELLOW SUBMARINE\x04\x04\x04\x04".as_bytes());
+    }
+
+    #[test]
+    fn test_detection_oracle_ecb_cbc() {
+        let input = [b'A'; 16 * 3];
+        let (cipher, mode) = encryption_oracle_ecb_cbc(&input[..]).unwrap();
+        let detected_mode = detection_oracle_ecb_cbc(&cipher);
+        assert_eq!(detected_mode, mode);
     }
 }
