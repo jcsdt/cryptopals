@@ -366,13 +366,22 @@ fn is_oracle_ecb<T: Encrypt>(block_size: usize, oracle: &T) -> bool {
     count_repeating_blocks(&text) > 1
 }
 
-fn remove_pkcs7(input: &[u8]) -> Vec<u8> {
-    let last_byte = input[input.len() - 1];
-    if input[input.len() - last_byte as usize..].iter().filter(|&b| *b != last_byte).collect::<Vec<&u8>>().is_empty() {
-        return input[..input.len() - last_byte as usize].to_vec();
+#[derive(Debug, PartialEq)]
+pub enum PaddingError {
+    BadPadding
+}
+
+fn remove_pkcs7(input: &[u8]) -> Result<Vec<u8>, PaddingError>  {
+    if input.is_empty() {
+        return Ok(input.to_vec());
     }
 
-    input.to_vec()
+    let last_byte = input[input.len() - 1];
+    if input[input.len() - last_byte as usize..].iter().all(|&b| b == last_byte) {
+        return Ok(input[..input.len() - last_byte as usize].to_vec())
+    }
+
+    Err(PaddingError::BadPadding)
 }
 
 pub fn crack_aes_ecb_128_with_prefix<T: Encrypt>(oracle: &T) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
@@ -444,7 +453,7 @@ pub fn crack_aes_ecb_128<T: Encrypt>(oracle: &T, prefix: &[u8], skip: usize) -> 
         }
     }
 
-    Ok(remove_pkcs7(&attack_padding[prefix.len() + block_size - 1..]))
+    Ok(remove_pkcs7(&attack_padding[prefix.len() + block_size - 1..]).unwrap())
 }
 
 pub struct User {
@@ -503,7 +512,7 @@ impl OracleEcbUser {
 
     fn decrypt(&self, input: &[u8]) -> Result<User, crypto::symmetriccipher::SymmetricCipherError> {
         let v = decrypt_aes_ecb_128(input, &self.key)?;
-        let unpadded = remove_pkcs7(&v);
+        let unpadded = remove_pkcs7(&v).unwrap();
         Ok(User::decode(&String::from_utf8(unpadded).unwrap()))
     }
 }
@@ -689,5 +698,15 @@ mod tests {
         let recovered_text = crack_aes_ecb_128_with_prefix(&oracle).unwrap();
         assert_eq!(plaintext, recovered_text);
         println!("{}", String::from_utf8(recovered_text).unwrap());
+    }
+
+    #[test]
+    fn test_pkcs7_valid() {
+        assert_eq!(remove_pkcs7("ICE ICE BABY\x04\x04\x04\x04".as_bytes()).unwrap(), "ICE ICE BABY".as_bytes());
+    }
+
+    #[test]
+    fn test_pkcs7_invalid() {
+        assert_eq!(remove_pkcs7("ICE ICE BABY\x01\x02\x03\x04".as_bytes()).err().unwrap(), PaddingError::BadPadding);
     }
 }
