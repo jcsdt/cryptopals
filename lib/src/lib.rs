@@ -288,6 +288,99 @@ pub fn detection_oracle_ecb_cbc(input: &[u8]) -> CipherMode {
     if c > 1 {CipherMode::ECB} else {CipherMode::CBC}
 }
 
+pub struct OracleEcb {
+    key: Vec<u8>,
+    plaintext: Vec<u8>
+}
+
+impl OracleEcb {
+    fn new(plaintext: Vec<u8>) -> Result<Self, rand::Error> {
+        let key = try!(gen_rand_bytes(16));
+        Ok(OracleEcb {
+            key,
+            plaintext,
+        })
+    }
+
+    fn encrypt(&self, input: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+        let mut to_encrypt = vec![];
+        to_encrypt.extend_from_slice(input);
+        to_encrypt.extend_from_slice(&self.plaintext);
+        let padded = pkcs7(&to_encrypt, (to_encrypt.len() / 16 + 1) * 16);
+        encrypt_aes_ecb_128(&padded, &self.key)
+    }
+}
+
+fn find_block_size(oracle: &OracleEcb) -> usize {
+    let mut size = 1;
+    let original_len = oracle.encrypt(&[]).unwrap().len();
+    loop {
+        let pre = vec![b'A'; size];
+        let text = oracle.encrypt(&pre).unwrap();
+        if text.len() == original_len {
+            size += 1;
+            continue;
+        } else {
+            return text.len() - original_len;
+        }
+    }
+}
+
+fn is_oracle_ecb(block_size: usize, oracle: &OracleEcb) -> bool {
+    let text = oracle.encrypt(&vec![b'A'; block_size * 3]).unwrap();
+    count_repeating_blocks(&text) > 1
+}
+
+fn remove_pkcs7(input: &[u8]) -> Vec<u8> {
+    let last_byte = input[input.len() - 1];
+    if input[input.len() - last_byte as usize..].iter().filter(|&b| *b != last_byte).collect::<Vec<&u8>>().is_empty() {
+        return input[..input.len() - last_byte as usize].to_vec();
+    }
+
+    input.to_vec()
+}
+
+pub fn crack_aes_ecb_128(oracle: &OracleEcb) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+    let block_size = find_block_size(oracle);
+    assert_eq!(16, block_size, "block size known to be 16");
+    let is_ecb = is_oracle_ecb(block_size, oracle);
+    if !is_ecb {
+        panic!("Encryption oracle should use ECB to be cracked");
+    }
+
+    let mut attack_padding = vec![b'A'; block_size - 1];
+
+    let mut blocks_to_crack : std::collections::BTreeMap<usize, Vec<u8>> = std::collections::BTreeMap::new();
+    for s in 0..block_size {
+        let cipher = oracle.encrypt(&attack_padding[..block_size - 1 - s])?;
+        for (i, c) in cipher[..].chunks(block_size).enumerate() {
+            blocks_to_crack.insert(i * (block_size ) + s, c.to_vec());
+        }
+
+        for (&k, ref to_decode) in blocks_to_crack.range(attack_padding[block_size - 1..].len()..) {
+            // decoded.len() is changed within this loop, 
+            // that why the condition makes sense
+            if k > attack_padding[block_size - 1..].len() {
+                break;
+            }
+
+            for n in 0..256 {
+                let b = n as u8;
+                let mut padding = vec![];
+                padding.extend_from_slice(&attack_padding[attack_padding.len() - (block_size - 1)..]);
+                padding.push(b);
+                let cipher = oracle.encrypt(&padding)?;
+                if &cipher[..block_size].to_vec() == *to_decode {
+                    attack_padding.push(b);
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(remove_pkcs7(&attack_padding[block_size - 1..]))
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -428,5 +521,14 @@ mod tests {
         let (cipher, mode) = encryption_oracle_ecb_cbc(&input[..]).unwrap();
         let detected_mode = detection_oracle_ecb_cbc(&cipher);
         assert_eq!(detected_mode, mode);
+    }
+
+    #[test]
+    fn test_crack_ecb_simple() {
+        let plaintext = base64::decode("Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkgaGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBqdXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUgYnkK").unwrap();
+        let oracle = OracleEcb::new(plaintext.clone()).unwrap();
+        let recovered_text = crack_aes_ecb_128(&oracle).unwrap();
+        assert_eq!(plaintext, recovered_text);
+        println!("{}", String::from_utf8(recovered_text).unwrap());
     }
 }
