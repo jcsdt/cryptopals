@@ -381,6 +381,83 @@ pub fn crack_aes_ecb_128(oracle: &OracleEcb) -> Result<Vec<u8>, crypto::symmetri
     Ok(remove_pkcs7(&attack_padding[block_size - 1..]))
 }
 
+pub struct User {
+    email: String,
+    uid: u32,
+    role: String,
+}
+
+impl User {
+    fn profile_for(email: &str) -> User {
+        User {
+            email: str::replace(&str::replace(email, "&", ""), "=", "").to_string(),
+            uid: 10,
+            role: "user".to_string()
+        }
+    }
+
+    fn encode(&self) -> String {
+        format!("email={}&uid={}&role={}", &self.email, self.uid, &self.role)
+    }
+
+    fn decode(input: &str) -> User {
+        let map: std::collections::HashMap<&str, &str> = input.split("&").map(|s| {
+            let idx = s.find("=");
+            let (key, value) = s.split_at(idx.unwrap());
+            // remove = sign
+            (key, &value[1..])
+        }).collect();
+
+        User {
+            email: map["email"].to_string(),
+            uid: map["uid"].parse::<u32>().unwrap(),
+            role: map["role"].to_string(),
+        }
+    }
+}
+
+pub struct OracleEcbUser {
+    key: Vec<u8>,
+}
+
+impl OracleEcbUser {
+    fn new() -> Result<Self, rand::Error> {
+        let key = try!(gen_rand_bytes(16));
+        Ok(OracleEcbUser {
+            key,
+        })
+    }
+
+    fn encrypt(&self, user: &User) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+        let mut to_encrypt = vec![];
+        to_encrypt.extend_from_slice(user.encode().as_bytes());
+        let padded = pkcs7(&to_encrypt, (to_encrypt.len() / 16 + 1) * 16);
+        encrypt_aes_ecb_128(&padded, &self.key)
+    }
+
+    fn decrypt(&self, input: &[u8]) -> Result<User, crypto::symmetriccipher::SymmetricCipherError> {
+        let v = decrypt_aes_ecb_128(input, &self.key)?;
+        let unpadded = remove_pkcs7(&v);
+        Ok(User::decode(&String::from_utf8(unpadded).unwrap()))
+    }
+}
+
+pub fn spoof_admin_user_ecb(oracle: OracleEcbUser) -> Result<User, crypto::symmetriccipher::SymmetricCipherError> {
+    let mut email = vec![];
+    email.extend_from_slice("AAAAAAAAAAadmin".as_bytes());
+    email.extend_from_slice(&[b'\x0b'; 11]);
+    let user = User::profile_for(&String::from_utf8(email).unwrap());
+    let cipher = oracle.encrypt(&user).unwrap();
+    let admin_block = &cipher[16..32];
+    let user = User::profile_for("quatorze@me.f");
+    let cipher = oracle.encrypt(&user).unwrap();
+    
+    let mut cut_and_paste = vec![];
+    cut_and_paste.extend_from_slice(&cipher[..32]);
+    cut_and_paste.extend_from_slice(admin_block);
+    oracle.decrypt(&cut_and_paste)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -530,5 +607,12 @@ mod tests {
         let recovered_text = crack_aes_ecb_128(&oracle).unwrap();
         assert_eq!(plaintext, recovered_text);
         println!("{}", String::from_utf8(recovered_text).unwrap());
+    }
+
+    #[test]
+    fn test_spoof_admin_user_ecb() {
+        let oracle = OracleEcbUser::new().unwrap();
+        let user = spoof_admin_user_ecb(oracle).unwrap();
+        assert_eq!(user.role, "admin");
     }
 }
