@@ -293,6 +293,16 @@ pub struct OracleEcb {
     plaintext: Vec<u8>
 }
 
+pub struct OracleEcbWithPrefix {
+    key: Vec<u8>,
+    plaintext: Vec<u8>,
+    prefix: Vec<u8>
+}
+
+pub trait Encrypt {
+    fn encrypt(&self, input: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError>;
+}
+
 impl OracleEcb {
     fn new(plaintext: Vec<u8>) -> Result<Self, rand::Error> {
         let key = try!(gen_rand_bytes(16));
@@ -301,7 +311,9 @@ impl OracleEcb {
             plaintext,
         })
     }
+}
 
+impl Encrypt for OracleEcb {
     fn encrypt(&self, input: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
         let mut to_encrypt = vec![];
         to_encrypt.extend_from_slice(input);
@@ -311,7 +323,30 @@ impl OracleEcb {
     }
 }
 
-fn find_block_size(oracle: &OracleEcb) -> usize {
+impl OracleEcbWithPrefix {
+    fn new(plaintext: Vec<u8>) -> Result<Self, rand::Error> {
+        let key = try!(gen_rand_bytes(16));
+        let prefix = gen_rand_bytes(thread_rng().gen_range(0, 48)).unwrap();
+        Ok(OracleEcbWithPrefix {
+            key,
+            plaintext,
+            prefix,
+        })
+    }
+}
+
+impl Encrypt for OracleEcbWithPrefix {
+    fn encrypt(&self, input: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+        let mut to_encrypt = vec![];
+        to_encrypt.extend_from_slice(&self.prefix);
+        to_encrypt.extend_from_slice(input);
+        to_encrypt.extend_from_slice(&self.plaintext);
+        let padded = pkcs7(&to_encrypt, (to_encrypt.len() / 16 + 1) * 16);
+        encrypt_aes_ecb_128(&padded, &self.key)
+    }
+}
+
+fn find_block_size<T: Encrypt>(oracle: &T) -> usize {
     let mut size = 1;
     let original_len = oracle.encrypt(&[]).unwrap().len();
     loop {
@@ -326,7 +361,7 @@ fn find_block_size(oracle: &OracleEcb) -> usize {
     }
 }
 
-fn is_oracle_ecb(block_size: usize, oracle: &OracleEcb) -> bool {
+fn is_oracle_ecb<T: Encrypt>(block_size: usize, oracle: &T) -> bool {
     let text = oracle.encrypt(&vec![b'A'; block_size * 3]).unwrap();
     count_repeating_blocks(&text) > 1
 }
@@ -340,7 +375,35 @@ fn remove_pkcs7(input: &[u8]) -> Vec<u8> {
     input.to_vec()
 }
 
-pub fn crack_aes_ecb_128(oracle: &OracleEcb) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+pub fn crack_aes_ecb_128_with_prefix<T: Encrypt>(oracle: &T) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+    let mut attack = vec![];
+    let mut skip = 0;
+    for i in 0..16 {
+        let mut padding = vec![];
+        padding.extend_from_slice(&attack);
+        padding.extend_from_slice(&[b'A'; 16 * 2]);
+
+        let ciphered = oracle.encrypt(&padding)?;
+        let s = ciphered[..].chunks(16).zip(ciphered[..].chunks(16).skip(1))
+            .enumerate()
+            .filter(|(_, (a, b))| a == b)
+            .map(|(idx, _)| idx).nth(0);
+
+        match s {
+            Some(v) => {
+                skip = v;
+                break;
+            },
+            None => {}
+        }
+
+        attack.push(i as u8);
+    };
+
+    crack_aes_ecb_128(oracle, &attack, skip)
+}
+
+pub fn crack_aes_ecb_128<T: Encrypt>(oracle: &T, prefix: &[u8], skip: usize) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
     let block_size = find_block_size(oracle);
     assert_eq!(16, block_size, "block size known to be 16");
     let is_ecb = is_oracle_ecb(block_size, oracle);
@@ -348,29 +411,32 @@ pub fn crack_aes_ecb_128(oracle: &OracleEcb) -> Result<Vec<u8>, crypto::symmetri
         panic!("Encryption oracle should use ECB to be cracked");
     }
 
-    let mut attack_padding = vec![b'A'; block_size - 1];
+    let mut attack_padding = vec![];
+    attack_padding.extend_from_slice(prefix);
+    attack_padding.extend_from_slice(&vec![b'A'; block_size - 1]);
 
     let mut blocks_to_crack : std::collections::BTreeMap<usize, Vec<u8>> = std::collections::BTreeMap::new();
     for s in 0..block_size {
-        let cipher = oracle.encrypt(&attack_padding[..block_size - 1 - s])?;
-        for (i, c) in cipher[..].chunks(block_size).enumerate() {
+        let cipher = oracle.encrypt(&attack_padding[..prefix.len() + block_size - 1 - s])?;
+        for (i, c) in cipher[..].chunks(block_size).skip(skip).enumerate() {
             blocks_to_crack.insert(i * (block_size ) + s, c.to_vec());
         }
 
-        for (&k, ref to_decode) in blocks_to_crack.range(attack_padding[block_size - 1..].len()..) {
+        for (&k, ref to_decode) in blocks_to_crack.range(attack_padding[prefix.len() + block_size - 1..].len()..) {
             // decoded.len() is changed within this loop, 
             // that why the condition makes sense
-            if k > attack_padding[block_size - 1..].len() {
+            if k > attack_padding[prefix.len() + block_size - 1..].len() {
                 break;
             }
 
             for n in 0..256 {
                 let b = n as u8;
                 let mut padding = vec![];
+                padding.extend_from_slice(&prefix);
                 padding.extend_from_slice(&attack_padding[attack_padding.len() - (block_size - 1)..]);
                 padding.push(b);
                 let cipher = oracle.encrypt(&padding)?;
-                if &cipher[..block_size].to_vec() == *to_decode {
+                if &cipher[..].chunks(block_size).skip(skip).nth(0).unwrap().to_vec() == *to_decode {
                     attack_padding.push(b);
                     break;
                 }
@@ -378,7 +444,7 @@ pub fn crack_aes_ecb_128(oracle: &OracleEcb) -> Result<Vec<u8>, crypto::symmetri
         }
     }
 
-    Ok(remove_pkcs7(&attack_padding[block_size - 1..]))
+    Ok(remove_pkcs7(&attack_padding[prefix.len() + block_size - 1..]))
 }
 
 pub struct User {
@@ -604,7 +670,7 @@ mod tests {
     fn test_crack_ecb_simple() {
         let plaintext = base64::decode("Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkgaGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBqdXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUgYnkK").unwrap();
         let oracle = OracleEcb::new(plaintext.clone()).unwrap();
-        let recovered_text = crack_aes_ecb_128(&oracle).unwrap();
+        let recovered_text = crack_aes_ecb_128(&oracle, &[], 0).unwrap();
         assert_eq!(plaintext, recovered_text);
         println!("{}", String::from_utf8(recovered_text).unwrap());
     }
@@ -614,5 +680,14 @@ mod tests {
         let oracle = OracleEcbUser::new().unwrap();
         let user = spoof_admin_user_ecb(oracle).unwrap();
         assert_eq!(user.role, "admin");
+    }
+
+    #[test]
+    fn test_crack_ecb_with_prefix() {
+        let plaintext = base64::decode("Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkgaGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBqdXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUgYnkK").unwrap();
+        let oracle = OracleEcbWithPrefix::new(plaintext.clone()).unwrap();
+        let recovered_text = crack_aes_ecb_128_with_prefix(&oracle).unwrap();
+        assert_eq!(plaintext, recovered_text);
+        println!("{}", String::from_utf8(recovered_text).unwrap());
     }
 }
