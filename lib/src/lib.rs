@@ -299,8 +299,17 @@ pub struct OracleEcbWithPrefix {
     prefix: Vec<u8>
 }
 
+pub struct OracleCbc {
+    key: Vec<u8>,
+    iv: Vec<u8>,
+}
+
 pub trait Encrypt {
     fn encrypt(&self, input: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError>;
+}
+
+pub trait Decrypt {
+    fn decrypt(&self, input: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError>;
 }
 
 impl OracleEcb {
@@ -343,6 +352,38 @@ impl Encrypt for OracleEcbWithPrefix {
         to_encrypt.extend_from_slice(&self.plaintext);
         let padded = pkcs7(&to_encrypt, (to_encrypt.len() / 16 + 1) * 16);
         encrypt_aes_ecb_128(&padded, &self.key)
+    }
+}
+
+impl OracleCbc {
+    fn new() -> Result<OracleCbc, rand::Error> {
+        let key = gen_rand_bytes(16)?;
+        let iv = gen_rand_bytes(16)?;
+        Ok(OracleCbc {
+            key,
+            iv,
+        })
+    }
+}
+
+impl Encrypt for OracleCbc {
+    fn encrypt(&self, input: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+        let mut bytes = vec![];
+        bytes.extend_from_slice("comment1=cooking%20MCs;userdata=".as_bytes());
+        bytes.extend_from_slice(input);
+        bytes.extend_from_slice(";comment2=%20like%20a%20pound%20of%20bacon".as_bytes());
+
+        bytes = pkcs7(&bytes, (bytes.len() / 16 + 1) * 16);
+        let result = encrypt_aes_cbc_128(&bytes, &self.key, &self.iv)?;
+        Ok(result)
+    }
+}
+
+impl Decrypt for OracleCbc {
+    fn decrypt(&self, input: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+        let mut result = decrypt_aes_cbc_128(input, &self.key, &self.iv)?;
+        result = remove_pkcs7(&result).unwrap();
+        Ok(result)
     }
 }
 
@@ -533,6 +574,18 @@ pub fn spoof_admin_user_ecb(oracle: OracleEcbUser) -> Result<User, crypto::symme
     oracle.decrypt(&cut_and_paste)
 }
 
+pub fn spoof_admin_user_cbc<T: Encrypt + Decrypt>(oracle: T) -> bool {
+    let mut cipher = oracle.encrypt(":admin<true:userdata=helloworld!!".as_bytes()).unwrap();
+
+    cipher[16] = cipher[16] ^ 1;
+    cipher[22] = cipher[22] ^ 1;
+    cipher[27] = cipher[27] ^ 1;
+    
+    let decoded = oracle.decrypt(&cipher).unwrap();
+    let result = String::from_utf8_lossy(&decoded);
+    result.contains(";admin=true;")
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -708,5 +761,11 @@ mod tests {
     #[test]
     fn test_pkcs7_invalid() {
         assert_eq!(remove_pkcs7("ICE ICE BABY\x01\x02\x03\x04".as_bytes()).err().unwrap(), PaddingError::BadPadding);
+    }
+
+    #[test]
+    fn test_spoof_admin_user_cbc() {
+        let oracle = OracleCbc::new().unwrap();
+        assert!(spoof_admin_user_cbc(oracle));
     }
 }
