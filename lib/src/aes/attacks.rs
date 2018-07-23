@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn test_detection_oracle_ecb_cbc() {
         let input = [b'A'; 16 * 3];
-        let (cipher, mode) = encryption_oracle_ecb_cbc(&input[..]).unwrap();
+        let (cipher, mode) = OracleEcbOrCbc::encrypt(&input[..]).unwrap();
         let detected_mode = detection_oracle_ecb_cbc(&cipher);
         assert_eq!(detected_mode, mode);
     }

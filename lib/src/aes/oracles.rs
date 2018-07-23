@@ -41,24 +41,28 @@ pub enum CipherMode {
     CBC,
 }
 
-pub fn encryption_oracle_ecb_cbc(input: &[u8]) -> Result<(Vec<u8>, CipherMode), EncryptionOracleError> {
-    let key = try!(common::gen_rand_bytes(16));
-    let mut plaintext = vec![];
+pub struct OracleEcbOrCbc {}
 
-    plaintext.append(&mut try!(common::gen_rand_bytes(thread_rng().gen_range(5, 10))));
-    plaintext.extend_from_slice(input);
-    plaintext.append(&mut try!(common::gen_rand_bytes(thread_rng().gen_range(5, 10))));
+impl OracleEcbOrCbc {
+    pub fn encrypt(input: &[u8]) -> Result<(Vec<u8>, CipherMode), EncryptionOracleError> {
+        let key = try!(common::gen_rand_bytes(16));
+        let mut plaintext = vec![];
     
-    plaintext = padding::pkcs7(&plaintext, (plaintext.len() / 16 + 1) * 16); 
-
-    let cipher_text = if rand::random() {
-        (try!(aes::blockmode::encrypt_aes_ecb_128(&plaintext, &key)), CipherMode::ECB)
-    } else {
-        let iv = try!(common::gen_rand_bytes(16));
-        (try!(aes::blockmode::encrypt_aes_cbc_128(&plaintext, &key, &iv)), CipherMode::CBC)
-    };
-
-    Ok(cipher_text)
+        plaintext.append(&mut try!(common::gen_rand_bytes(thread_rng().gen_range(5, 10))));
+        plaintext.extend_from_slice(input);
+        plaintext.append(&mut try!(common::gen_rand_bytes(thread_rng().gen_range(5, 10))));
+        
+        plaintext = padding::pkcs7(&plaintext, (plaintext.len() / 16 + 1) * 16); 
+    
+        let cipher_text = if rand::random() {
+            (try!(aes::blockmode::encrypt_aes_ecb_128(&plaintext, &key)), CipherMode::ECB)
+        } else {
+            let iv = try!(common::gen_rand_bytes(16));
+            (try!(aes::blockmode::encrypt_aes_cbc_128(&plaintext, &key, &iv)), CipherMode::CBC)
+        };
+    
+        Ok(cipher_text)
+    }
 }
 
 pub struct OracleEcb {
