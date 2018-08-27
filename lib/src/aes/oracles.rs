@@ -220,3 +220,31 @@ impl OracleEcbUser {
         Ok(User::decode(&String::from_utf8(unpadded).unwrap()))
     }
 }
+
+pub struct PaddingOracle {
+    key: Vec<u8>,
+}
+
+impl PaddingOracle {
+    pub fn new() -> Result<Self, rand::Error> {
+        let key = common::gen_rand_bytes(16)?;
+        Ok(PaddingOracle {
+            key,
+        })
+    }
+
+    pub fn check_padding(&self, input: &[u8]) -> Result<bool, crypto::symmetriccipher::SymmetricCipherError> {
+        let result = aes::blockmode::decrypt_aes_cbc_128(&input[16..], &self.key, &input[..16])?;
+        Ok(padding::remove_pkcs7(&result).is_ok())
+    }
+}
+
+impl Encrypt for PaddingOracle {
+    fn encrypt(&self, input: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+        let mut iv = common::gen_rand_bytes(16).unwrap();
+        let padded = padding::pkcs7(input, (input.len() / 16 + 1) * 16);
+        let result  = aes::blockmode::encrypt_aes_cbc_128(&padded, &self.key, &iv)?;
+        iv.extend_from_slice(&result);
+        Ok(iv)
+    }
+}

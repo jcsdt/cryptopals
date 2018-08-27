@@ -5,6 +5,8 @@ use crypto;
 use hex;
 
 use aes::oracles::*;
+use common::xor_bytes;
+use padding::remove_pkcs7;
 use super::super::padding;
 
 fn count_repeating_blocks(input: &[u8]) -> u32  { 
@@ -158,8 +160,46 @@ pub fn spoof_admin_user_cbc<T: Encrypt + Decrypt>(oracle: T) -> bool {
     result.contains(";admin=true;")
 }
 
+fn crack_inter_padding_oracle(chunk: &[u8], oracle: &PaddingOracle) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+    let mut payload = vec![0; 16];
+    payload.extend_from_slice(chunk);
+
+    let mut inter = vec![0; 16];
+
+    for i in 0..16 {
+        loop {
+            if oracle.check_padding(&payload)? {
+                inter[16 - (i + 1)] = (i + 1) as u8 ^ payload[16 - (i + 1)];
+                (0..(i + 1)).for_each(|j| payload[16 - (j + 1)] = (i + 2) as u8 ^ inter[16 - (j + 1)]);
+                break;
+            } else {
+                payload[16 - (i + 1)] += 1;
+            }
+        }
+    }
+
+    Ok(inter)
+}
+
+pub fn crack_padding_oracle(cipher: &[u8], oracle: PaddingOracle) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+    let inter = cipher.chunks(16).skip(1)
+        .map(|c| crack_inter_padding_oracle(c, &oracle))
+        .try_fold(vec![], |mut acc, r| {
+            if r.is_err() {
+                r
+            } else {
+                acc.extend_from_slice(&r.unwrap());
+                Ok(acc)
+            }
+        })?;
+
+    Ok(remove_pkcs7(&xor_bytes(&inter, cipher)).unwrap())
+}
+
 #[cfg(test)]
 mod tests {
+
+    use rand::Rng;
 
     use super::*;
 
@@ -214,5 +254,27 @@ mod tests {
     fn test_spoof_admin_user_cbc() {
         let oracle = OracleCbc::new().unwrap();
         assert!(spoof_admin_user_cbc(oracle));
+    }
+
+    #[test]
+    fn test_crack_padding_oracle() {
+        let texts = [
+            "MDAwMDAwTm93IHRoYXQgdGhlIHBhcnR5IGlzIGp1bXBpbmc=",
+            "MDAwMDAxV2l0aCB0aGUgYmFzcyBraWNrZWQgaW4gYW5kIHRoZSBWZWdhJ3MgYXJlIHB1bXBpbic=",
+            "MDAwMDAyUXVpY2sgdG8gdGhlIHBvaW50LCB0byB0aGUgcG9pbnQsIG5vIGZha2luZw==",
+            "MDAwMDAzQ29va2luZyBNQydzIGxpa2UgYSBwb3VuZCBvZiBiYWNvbg==",
+            "MDAwMDA0QnVybmluZyAnZW0sIGlmIHlvdSBhaW4ndCBxdWljayBhbmQgbmltYmxl",
+            "MDAwMDA1SSBnbyBjcmF6eSB3aGVuIEkgaGVhciBhIGN5bWJhbA==",
+            "MDAwMDA2QW5kIGEgaGlnaCBoYXQgd2l0aCBhIHNvdXBlZCB1cCB0ZW1wbw==",
+            "MDAwMDA3SSdtIG9uIGEgcm9sbCwgaXQncyB0aW1lIHRvIGdvIHNvbG8=",
+            "MDAwMDA4b2xsaW4nIGluIG15IGZpdmUgcG9pbnQgb2g=",
+            "MDAwMDA5aXRoIG15IHJhZy10b3AgZG93biBzbyBteSBoYWlyIGNhbiBibG93",
+        ];
+        let plaintext = base64::decode(texts[rand::thread_rng().gen_range(0, 10)]).unwrap();
+        let oracle = PaddingOracle::new().unwrap();
+        let cipher = oracle.encrypt(&plaintext).unwrap();
+        let cracked = crack_padding_oracle(&cipher, oracle).unwrap();
+        assert_eq!(cracked, plaintext);
+        println!("{}", String::from_utf8(plaintext).unwrap());
     }
 }

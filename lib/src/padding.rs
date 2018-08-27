@@ -19,6 +19,10 @@ pub fn remove_pkcs7(input: &[u8]) -> Result<Vec<u8>, PaddingError>  {
     }
 
     let last_byte = input[input.len() - 1];
+    if last_byte <= 0 || last_byte > 16 {
+        return Err(PaddingError::BadPadding);
+    } 
+
     if input[input.len() - last_byte as usize..].iter().all(|&b| b == last_byte) {
         return Ok(input[..input.len() - last_byte as usize].to_vec())
     }
