@@ -10,5 +10,6 @@ extern crate rand;
 pub mod aes;
 pub mod common;
 pub mod padding;
+pub mod prng;
 pub mod xorcipher;
 
