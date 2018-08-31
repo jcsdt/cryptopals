@@ -1,4 +1,6 @@
 use std::num::Wrapping;
+use std::time;
+use std::time::UNIX_EPOCH;
 
 const N: usize = 624;
 const M: usize = 397;
@@ -54,12 +56,30 @@ impl MT19937 {
     }
 }
 
+pub fn crack_mt199937_seed(mt: &mut MT19937, before: time::SystemTime, after: time::SystemTime) -> u32 {
+   let n = mt.gen();
+   for s in before.duration_since(UNIX_EPOCH).unwrap().as_secs() .. after.duration_since(UNIX_EPOCH).unwrap().as_secs() {
+        let mut mt2 = MT19937::new(s as u32);
+        let m = mt2.gen();
+        if n == m {
+            return s as u32;
+        }
+   }
+
+   0
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use std::fs::File;
     use std::io::prelude::*;
+    use std::thread;
+    use std::time::SystemTime;
+
+    use rand::{thread_rng, Rng};
 
     #[test]
     fn test_mt19937() {
@@ -73,5 +93,19 @@ mod tests {
         for i in 0..1000 {
             assert_eq!(mt.gen(), test_outputs[i])
         }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_crack_mt19937() {
+        let before = SystemTime::now();
+        let s = thread_rng().gen_range(40, 200);
+        thread::sleep(time::Duration::from_secs(s));
+        let seed = SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_secs() as u32;
+        let mut mt = MT19937::new(seed);
+        let s = thread_rng().gen_range(40, 200);
+        thread::sleep(time::Duration::from_secs(s));
+        let recovered_seed = crack_mt199937_seed(&mut mt, before, SystemTime::now());
+        assert_eq!(recovered_seed, seed);
     }
 }
