@@ -156,6 +156,41 @@ impl Decrypt for OracleCbc {
     }
 }
 
+pub struct OracleCtr {
+    key: Vec<u8>,
+    nonce: u64,
+}
+
+impl OracleCtr {
+    pub fn new() -> Result<OracleCtr, rand::Error> {
+        let key = common::gen_rand_bytes(16)?;
+        let nonce = rand::random::<u64>();
+        Ok(OracleCtr {
+            key,
+            nonce,
+        })
+    }
+}
+
+impl Encrypt for OracleCtr {
+    fn encrypt(&self, input: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+        let mut bytes = vec![];
+        bytes.extend_from_slice("comment1=cooking%20MCs;userdata=".as_bytes());
+        bytes.extend_from_slice(input);
+        bytes.extend_from_slice(";comment2=%20like%20a%20pound%20of%20bacon".as_bytes());
+
+        let result = aes::streammode::ctr_128(&bytes, &self.key, self.nonce)?;
+        Ok(result)
+    }
+}
+
+impl Decrypt for OracleCtr {
+    fn decrypt(&self, input: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+        let result = aes::streammode::ctr_128(input, &self.key, self.nonce)?;
+        Ok(result)
+    }
+}
+
 pub struct User {
     email: String,
     uid: u32,

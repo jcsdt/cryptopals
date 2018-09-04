@@ -160,6 +160,18 @@ pub fn spoof_admin_user_cbc<T: Encrypt + Decrypt>(oracle: T) -> bool {
     result.contains(";admin=true;")
 }
 
+pub fn spoof_admin_user_ctr<T: Encrypt + Decrypt>(oracle: T) -> bool {
+    let mut cipher = oracle.encrypt(":admin<true:userdata=helloworld!!".as_bytes()).unwrap();
+
+    cipher[32] = cipher[32] ^ 1;
+    cipher[38] = cipher[38] ^ 1;
+    cipher[43] = cipher[43] ^ 1;
+    
+    let decoded = oracle.decrypt(&cipher).unwrap();
+    let result = String::from_utf8_lossy(&decoded);
+    result.contains(";admin=true;")
+}
+
 fn crack_inter_padding_oracle(chunk: &[u8], oracle: &PaddingOracle) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
     let mut payload = vec![0; 16];
     payload.extend_from_slice(chunk);
@@ -254,6 +266,12 @@ mod tests {
     fn test_spoof_admin_user_cbc() {
         let oracle = OracleCbc::new().unwrap();
         assert!(spoof_admin_user_cbc(oracle));
+    }
+
+    #[test]
+    fn test_spoof_admin_user_ctr() {
+        let oracle = OracleCtr::new().unwrap();
+        assert!(spoof_admin_user_ctr(oracle));
     }
 
     #[test]
