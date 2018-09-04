@@ -27,18 +27,42 @@ impl MT19937 {
         }
     }
 
+    pub fn clone(state: &[u32]) -> MT19937 {
+        let mut new_state = [Wrapping(0); N];
+
+        for (i, &s) in state.iter().enumerate() {
+            new_state[i] = Wrapping(s);
+        }
+        MT19937 {
+            state: new_state,
+            index: N,
+        }
+    }
+
     pub fn gen(&mut self) -> u32 {
         if self.index >= self.state.len() {
             self.twist();
         }
 
-        let Wrapping(mut y) = self.state[self.index];
+        let Wrapping(y) = self.state[self.index];
+        
+        self.index += 1;
+        MT19937::tangle(y)
+    }
+
+    fn tangle(mut y: u32) -> u32 {
         y = y ^ (y >> 11);
         y = y ^ ((y << 7) & 0x9D2C5680);
         y = y ^ ((y << 15) & 0xEFC60000);
         y = y ^ (y >> 18);
-        
-        self.index += 1;
+        y
+    }
+
+    pub fn untangle(mut y: u32) -> u32 {
+        y = y ^ (y >> 18);
+        y = y ^ ((y << 15) & 0xEFC60000);
+        y = y ^ (0x9D2C5680 & ((y << 7) ^ ((0x9D2C5680 << 7) & ((y << 14) ^ ((0x9D2C5680 << 14) & ((y << 21) ^ ((0x9D2C5680 << 21) & (y << 28))))))));
+        y = y ^ (y >> 11) ^ (y >> 22);
         y
     }
 
@@ -66,11 +90,22 @@ pub fn crack_mt199937_seed(mt: &mut MT19937, before: time::SystemTime, after: ti
         }
    }
 
-   0
+   0 
+} 
+
+pub fn clone_mt19937(mt: &mut MT19937) -> MT19937 {
+    let mut state = [0; N];
+
+    for i in 0..N {
+        let n = mt.gen();
+        let m = MT19937::untangle(n);
+        state[i] = m;
+    }
+
+    MT19937::clone(&state)
 }
 
-
-#[cfg(test)]
+#[cfg(test)] 
 mod tests {
     use super::*;
 
@@ -96,6 +131,13 @@ mod tests {
     }
 
     #[test]
+    fn test_untangle() {
+        let n = rand::random::<u32>();
+        let y = MT19937::tangle(n);
+        assert_eq!(MT19937::untangle(y), n);
+    }
+
+    #[test]
     #[ignore]
     fn test_crack_mt19937() {
         let before = SystemTime::now();
@@ -107,5 +149,15 @@ mod tests {
         thread::sleep(time::Duration::from_secs(s));
         let recovered_seed = crack_mt199937_seed(&mut mt, before, SystemTime::now());
         assert_eq!(recovered_seed, seed);
+    }
+
+    #[test]
+    fn test_clone_mt19937() {
+        let mut mt = MT19937::new(5489);
+        let mut mt_cloned = clone_mt19937(&mut mt);
+
+        for _i in 0..1000 {
+            assert_eq!(mt_cloned.gen(), mt.gen());
+        }
     }
 }
