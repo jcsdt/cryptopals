@@ -208,6 +208,24 @@ pub fn crack_padding_oracle(cipher: &[u8], oracle: PaddingOracle) -> Result<Vec<
     Ok(remove_pkcs7(&xor_bytes(&inter, cipher)).unwrap())
 }
 
+pub fn crack_random_access_ctr(cipher: &[u8], oracle: &OracleEditCtr) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+    let (oks, errors): (Vec<_>, Vec<_>) = cipher.iter().enumerate().rev().map(|(i, &b)| {
+        for n in 0..256u32 {
+            if oracle.edit(cipher, i as u32, &[n as u8])?[i] == b {
+                return Ok(n as u8);
+            }
+        }
+
+        Ok(0)
+    }).partition(Result::is_ok);
+
+    if !errors.is_empty() {
+        return Err(errors.into_iter().map(Result::unwrap_err).nth(0).unwrap());
+    }
+
+    Ok(oks.into_iter().map(Result::unwrap).rev().collect::<Vec<u8>>())
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -294,5 +312,22 @@ mod tests {
         let cracked = crack_padding_oracle(&cipher, oracle).unwrap();
         assert_eq!(cracked, plaintext);
         println!("{}", String::from_utf8(plaintext).unwrap());
+    }
+
+    #[test]
+    fn test_crack_random_access_ctr() {
+        let mut f = File::open("./data/25.txt").expect("file not found");
+
+        let mut content = String::new();
+        f.read_to_string(&mut content).expect("something went wrong reading the file");
+
+        let plaintext = base64::decode(&str::replace(&content, "\n", "")).unwrap();
+
+        let oracle = OracleEditCtr::new().unwrap();
+        let cipher = oracle.encrypt(&plaintext).unwrap();
+
+        let cracked = crack_random_access_ctr(&cipher, &oracle).unwrap();
+
+        assert_eq!(cracked, plaintext);
     }
 }

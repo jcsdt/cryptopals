@@ -283,3 +283,57 @@ impl Encrypt for PaddingOracle {
         Ok(iv)
     }
 }
+
+pub struct OracleEditCtr {
+    key: Vec<u8>,
+    nonce: u64,
+}
+
+impl OracleEditCtr {
+    pub fn new() -> Result<OracleEditCtr, rand::Error> {
+        let key = common::gen_rand_bytes(16)?;
+        let nonce = rand::random::<u64>();
+        Ok(OracleEditCtr {
+            key,
+            nonce,
+        })
+    }
+
+    pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+       aes::streammode::ctr_128(plaintext, &self.key, self.nonce)
+    }
+
+    pub fn edit(&self, cipher: &[u8], offset: u32, new_text: &[u8]) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+        let block_number = offset / 16;
+
+        let tail = &cipher[(block_number * 16) as usize..];
+
+        let mut keystream = vec![];
+        keystream.extend_from_slice(&self.nonce.to_bytes());
+        keystream.extend_from_slice(&(block_number as u64).to_bytes());
+        let block = aes::blockmode::encrypt_aes_ecb_128(&keystream, &self.key)?;
+        let decrypted = common::xor_bytes(&block[..std::cmp::min(tail.len(), 16)], &tail[0..std::cmp::min(tail.len(), 16)]);
+
+        let mut new_tail = vec![];
+        new_tail.extend_from_slice(&decrypted[..(offset % 16) as usize]);
+        new_tail.extend_from_slice(new_text);
+
+        let (oks, errors): (Vec<_>, Vec<_>) = new_tail.chunks(16).enumerate().map(|(i, c)| {
+            let mut keystream = vec![];
+            keystream.extend_from_slice(&self.nonce.to_bytes());
+            keystream.extend_from_slice(&((i + block_number as usize) as u64).to_bytes());
+            let block = aes::blockmode::encrypt_aes_ecb_128(&keystream, &self.key);
+            block.map(|b| common::xor_bytes(&b[..c.len()], c))
+        }).partition(Result::is_ok);
+
+        if !errors.is_empty() {
+            return Err(errors.into_iter().map(Result::unwrap_err).nth(0).unwrap());
+        }
+        
+        let mut result = vec![];
+        result.extend_from_slice(&cipher[..(block_number * 16) as usize]);
+        result.append(&mut oks.into_iter().map(Result::unwrap).flatten().collect());
+
+        Ok(result)
+    }
+}
