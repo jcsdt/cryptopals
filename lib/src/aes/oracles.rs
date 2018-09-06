@@ -120,7 +120,7 @@ impl Encrypt for OracleEcbWithPrefix {
 }
 
 pub struct OracleCbc {
-    key: Vec<u8>,
+    pub key: Vec<u8>,
     iv: Vec<u8>,
 }
 
@@ -131,6 +131,14 @@ impl OracleCbc {
         Ok(OracleCbc {
             key,
             iv,
+        })
+    }
+
+    pub fn new_without_iv() -> Result<OracleCbc, rand::Error> {
+        let key = common::gen_rand_bytes(16)?;
+        Ok(OracleCbc {
+            key: key.clone(),
+            iv: key,
         })
     }
 }

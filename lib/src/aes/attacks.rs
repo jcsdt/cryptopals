@@ -226,6 +226,22 @@ pub fn crack_random_access_ctr(cipher: &[u8], oracle: &OracleEditCtr) -> Result<
     Ok(oks.into_iter().map(Result::unwrap).rev().collect::<Vec<u8>>())
 }
 
+pub fn recover_key_from_iv_key_cbc(oracle: &OracleCbc) -> Result<Vec<u8>, crypto::symmetriccipher::SymmetricCipherError> {
+    let mut cipher = oracle.encrypt(&"yellowsubmarine!".bytes().collect::<Vec<u8>>())?;
+    for b in &mut cipher[16..32] {
+        *b = 0;
+    }
+
+    let mut forged_cipher = vec![];
+    forged_cipher.extend_from_slice(&cipher[..32]);
+    forged_cipher.extend_from_slice(&cipher[..16]);
+    forged_cipher.extend_from_slice(&cipher[48..]);
+
+    let plaintext = oracle.decrypt(&forged_cipher)?;
+    println!("{:?}", plaintext);
+    Ok(xor_bytes(&plaintext[..16], &plaintext[32..48]))
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -329,5 +345,12 @@ mod tests {
         let cracked = crack_random_access_ctr(&cipher, &oracle).unwrap();
 
         assert_eq!(cracked, plaintext);
+    }
+
+    #[test]
+    fn test_recover_from_iv_key_cbc() {
+        let oracle = OracleCbc::new_without_iv().unwrap();
+        let recovered_key = recover_key_from_iv_key_cbc(&oracle).unwrap();
+        assert_eq!(recovered_key, oracle.key);
     }
 }
