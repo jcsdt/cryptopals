@@ -34,6 +34,12 @@ pub struct Md4 {
     state: Md4State,
 }
 
+impl Md4 {
+    pub fn with_state(state: [u32; 4], length_bytes: u64) -> Md4 {
+        let s = u32x4(state[0], state[1], state[2], state[3]);
+        Md4{ length_bytes, state: Md4State { s }, buffer: Default::default() }
+    }
+}
 
 impl Md4State {
     fn process_block(&mut self, input: &Block) {
