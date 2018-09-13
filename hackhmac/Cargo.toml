@@ -1,0 +1,8 @@
+[package]
+name = "hackhmac"
+version = "0.1.0"
+authors = ["Jean Casademont <jean.casademont@gmail.com>"]
+
+[dependencies]
+hex = "0.3"
+requests = "0.0.30"

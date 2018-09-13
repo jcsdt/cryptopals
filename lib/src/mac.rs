@@ -4,6 +4,34 @@ extern crate sha1;
 use self::md4::{Md4, Digest};
 use self::sha1::Sha1;
 
+use common::xor_bytes;
+
+pub fn hmac_sha1(key: &[u8], message: &[u8]) -> Vec<u8> {
+    let key_prime;
+    if key.len() > 64 {
+        key_prime = Sha1::digest(&key).to_vec();
+    } else {
+        let mut tmp = vec![0u8; 64];
+        for i in 0..key.len() {
+            tmp[i] = key[i];
+        }
+        key_prime = tmp;
+    }
+
+    let o_pad_key = xor_bytes(&key_prime, &[0x5c; 64]);
+    let i_pad_key = xor_bytes(&key_prime, &[0x36; 64]);
+
+    let mut input = vec![];
+    input.extend_from_slice(&i_pad_key);
+    input.extend_from_slice(message);
+    
+    let mut output = vec![];
+    output.extend_from_slice(&o_pad_key);
+    output.extend_from_slice(&Sha1::digest(&input));
+
+    Sha1::digest(&output).to_vec()
+}
+
 pub fn secret_prefix_mac_sha1(key: &[u8], message: &[u8]) -> Vec<u8> {
     let mut input = vec![];
     input.extend_from_slice(key);

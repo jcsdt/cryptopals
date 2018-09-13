@@ -1,0 +1,11 @@
+[workspace]
+
+members = [
+	"lib",
+	"vuln",
+	"hackhmac",
+]
+
+[patch.crates-io]
+sha-1 = { path = "third_party/hashes/sha1" }
+md4 = { path = "third_party/hashes/md4" }
