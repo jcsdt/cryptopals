@@ -1,5 +1,7 @@
 use base64;
 use hex;
+use num_bigint::BigUint;
+use num_traits::{Zero, One};
 use rand;
 use rand::prelude::*;
 
@@ -22,6 +24,23 @@ pub fn gen_rand_bytes(size: usize) -> Result<Vec<u8>, rand::Error> {
     let mut result = vec![0; size];   
     try!(thread_rng().try_fill(&mut result[..]));
     Ok(result)
+}
+
+pub fn modexp(base: &BigUint, exp: &BigUint, m: &BigUint) -> BigUint {
+    let mut a = base % m;
+    let mut r = if exp % 2u8 == One::one() { a.clone() } else { Zero::zero() };
+
+    let mut i = 1;
+    while i <= exp.bits() {
+        a = (&a * &a) % m;
+        if (exp >> i) % 2u8 == One::one() {
+            r *= a.clone();
+            r %= m;
+        }
+        i += 1; 
+    }
+
+    r
 }
 
 #[cfg(test)]
