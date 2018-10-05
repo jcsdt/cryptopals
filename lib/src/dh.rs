@@ -23,7 +23,7 @@ pub trait Dh {
 
 impl Dh for DhPlayer {
     fn generate_session_key(&mut self, other_pubkey: &BigUint) {
-       self.s = Sha256::digest(&modexp(other_pubkey, &self.random, &self.p).to_bytes_be()).to_vec();
+        self.s = Sha256::digest(&modexp(other_pubkey, &self.random, &self.p).to_bytes_be()).to_vec();
     }
 
     fn send_encrypted_message(&self) -> Result<Vec<u8>, EncryptionOracleError> {
